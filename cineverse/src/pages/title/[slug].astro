@@ -1,0 +1,540 @@
+
+---
+import "../../styles/global.css";
+import { supabase } from "../../lib/supabase";
+
+export const prerender = false;
+
+const slug = Astro.params.slug;
+
+const { data: movie, error } = await supabase
+  .from("media")
+  .select(`
+    id,
+    slug,
+    title,
+    poster_url,
+    backdrop_url,
+    description,
+    imdb_rating,
+    video_type,
+    duration_minutes,
+    release_year,
+    language,
+    country,
+    director
+  `)
+  .eq("slug", slug ?? "")
+  .eq("is_published", true)
+  .eq("media_type", "movie")
+  .maybeSingle();
+
+if (error) {
+  console.error("Movie query failed:", error.message);
+}
+
+let genres: { name: string; slug: string }[] = [];
+
+let sources: {
+  id: string;
+  source_type: string;
+  quality: string | null;
+  label: string | null;
+  url: string;
+}[] = [];
+
+if (movie) {
+  const [linksResult, sourcesResult] = await Promise.all([
+    supabase
+      .from("media_categories")
+      .select("category_id")
+      .eq("media_id", movie.id),
+
+    supabase
+      .from("video_sources")
+      .select("id, source_type, quality, label, url")
+      .eq("media_id", movie.id)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true }),
+  ]);
+
+  if (linksResult.error) {
+    console.error("Category links query failed:", linksResult.error.message);
+  }
+
+  if (sourcesResult.error) {
+    console.error("Video sources query failed:", sourcesResult.error.message);
+  }
+
+  sources = sourcesResult.data ?? [];
+
+  const categoryIds = (linksResult.data ?? []).map(
+    (item) => item.category_id
+  );
+
+  if (categoryIds.length > 0) {
+    const { data: categoryRows, error: categoryError } = await supabase
+      .from("categories")
+      .select("name, slug")
+      .in("id", categoryIds);
+
+    if (categoryError) {
+      console.error("Categories query failed:", categoryError.message);
+    }
+
+    genres = categoryRows ?? [];
+  }
+}
+
+function safeHttpsUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== "https:") return null;
+
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+// Convert supported video URLs to embeddable URLs.
+function getEmbedUrl(value: string): string | null {
+  const safeUrl = safeHttpsUrl(value);
+
+  if (!safeUrl) return null;
+
+  try {
+    const url = new URL(safeUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+
+    // YouTube watch URLs
+    if (
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "music.youtube.com"
+    ) {
+      const videoId = url.searchParams.get("v");
+
+      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        return `https://www.youtube.com/embed/${videoId}`;
+      }
+
+      // Already an embed URL
+      if (host === "youtube.com" && url.pathname.startsWith("/embed/")) {
+        return safeUrl;
+      }
+
+      return null;
+    }
+
+    // YouTube short URLs
+    if (host === "youtu.be") {
+      const videoId = url.pathname.split("/").filter(Boolean)[0];
+
+      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        return `https://www.youtube.com/embed/${videoId}`;
+      }
+
+      return null;
+    }
+
+    // Vimeo
+    if (host === "vimeo.com") {
+      const videoId = url.pathname.split("/").filter(Boolean)[0];
+
+      if (videoId && /^\d+$/.test(videoId)) {
+        return `https://player.vimeo.com/video/${videoId}`;
+      }
+
+      return null;
+    }
+
+    // Other HTTPS URLs may work if their provider permits embedding.
+    return safeUrl;
+  } catch {
+    return null;
+  }
+}
+
+const playerSources = sources.filter(
+  (source) =>
+    source.source_type === "player" &&
+    getEmbedUrl(source.url) !== null
+);
+
+const downloadSources = sources.filter(
+  (source) =>
+    source.source_type === "download" &&
+    safeHttpsUrl(source.url) !== null
+);
+
+const pageTitle = movie
+  ? `${movie.title} (${movie.release_year ?? "Movie"}) — CineVerse`
+  : "Movie Not Found — CineVerse";
+
+const pageDescription = movie?.description
+  ? movie.description.slice(0, 160)
+  : "Explore movie details on CineVerse.";
+
+const canonicalUrl = movie
+  ? new URL(
+      `/title/${encodeURIComponent(movie.slug)}/`,
+      Astro.site ?? Astro.url.origin
+    ).href
+  : null;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#09090b" />
+
+    <title>{pageTitle}</title>
+    <meta name="description" content={pageDescription} />
+
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+
+  <body class="min-h-screen bg-zinc-950 font-sans text-zinc-100">
+    <header class="sticky top-0 z-40 border-b border-white/10 bg-zinc-950/90 backdrop-blur-xl">
+      <nav class="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-8">
+        <a href="/" class="text-xl font-black tracking-tight">
+          <span class="text-violet-400">CINE</span>VERSE
+        </a>
+
+        <a
+          href="/"
+          class="rounded-lg border border-white/10 px-4 py-2 text-sm text-zinc-300 transition hover:border-violet-400/50 hover:text-white"
+        >
+          ← Back to Home
+        </a>
+      </nav>
+    </header>
+
+    {!movie ? (
+      <main class="mx-auto max-w-3xl px-4 py-28 text-center">
+        <p class="text-sm font-bold uppercase tracking-[0.25em] text-violet-400">
+          404 — Not Found
+        </p>
+
+        <h1 class="mt-4 text-4xl font-black">Movie not found</h1>
+
+        <p class="mt-4 text-zinc-400">
+          This movie does not exist or has not been published yet.
+        </p>
+
+        <a
+          href="/"
+          class="mt-8 inline-flex rounded-xl bg-violet-500 px-6 py-3 font-bold transition hover:bg-violet-400"
+        >
+          Browse Movies
+        </a>
+      </main>
+    ) : (
+      <main class="mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12">
+        <!-- Movie hero -->
+        <section class="relative isolate overflow-hidden rounded-3xl border border-white/10 bg-zinc-900">
+          {movie.backdrop_url && (
+            <img
+              src={movie.backdrop_url}
+              alt=""
+              fetchpriority="high"
+              decoding="async"
+              class="absolute inset-0 -z-20 h-full w-full object-cover opacity-25"
+            />
+          )}
+
+          <div class="absolute inset-0 -z-10 bg-gradient-to-r from-zinc-950 via-zinc-950/95 to-zinc-950/60"></div>
+
+          <div class="grid gap-8 p-6 md:grid-cols-[260px_1fr] md:gap-10 md:p-10">
+            <div>
+              {movie.poster_url ? (
+                <img
+                  src={movie.poster_url}
+                  alt={`${movie.title} poster`}
+                  fetchpriority="high"
+                  decoding="async"
+                  class="mx-auto w-full max-w-[260px] rounded-2xl border border-white/10 object-cover shadow-2xl"
+                />
+              ) : (
+                <div class="flex aspect-[2/3] w-full max-w-[260px] items-center justify-center rounded-2xl bg-zinc-800 p-5 text-center text-zinc-400">
+                  {movie.title}
+                </div>
+              )}
+            </div>
+
+            <div class="flex flex-col justify-center">
+              <p class="text-xs font-bold uppercase tracking-[0.25em] text-violet-300">
+                Movie Details
+              </p>
+
+              <h1 class="mt-3 text-3xl font-black tracking-tight sm:text-4xl md:text-5xl">
+                {movie.title}
+                {movie.release_year && (
+                  <span class="ml-2 text-xl font-medium text-zinc-400 md:text-2xl">
+                    ({movie.release_year})
+                  </span>
+                )}
+              </h1>
+
+              <div class="mt-5 flex flex-wrap items-center gap-2">
+                {movie.imdb_rating != null && (
+                  <span class="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-sm font-bold text-yellow-400">
+                    ★ IMDb {movie.imdb_rating}/10
+                  </span>
+                )}
+
+                {movie.video_type && (
+                  <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold">
+                    {movie.video_type}
+                  </span>
+                )}
+
+                {movie.duration_minutes != null &&
+                  movie.duration_minutes > 0 && (
+                    <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                      {Math.floor(movie.duration_minutes / 60)}h{" "}
+                      {movie.duration_minutes % 60}m
+                    </span>
+                  )}
+              </div>
+
+              {genres.length > 0 && (
+                <div class="mt-5 flex flex-wrap gap-2">
+                  {genres.map((genre) => (
+                    <span
+                      class="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-200"
+                    >
+                      {genre.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div class="mt-7 grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3">
+                <div>
+                  <p class="text-xs text-zinc-500">Language</p>
+                  <p class="mt-1 text-sm font-medium">
+                    {movie.language || "Unknown"}
+                  </p>
+                </div>
+
+                <div>
+                  <p class="text-xs text-zinc-500">Country</p>
+                  <p class="mt-1 text-sm font-medium">
+                    {movie.country || "Unknown"}
+                  </p>
+                </div>
+
+                <div>
+                  <p class="text-xs text-zinc-500">Director</p>
+                  <p class="mt-1 text-sm font-medium">
+                    {movie.director || "Unknown"}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-7">
+                <h2 class="text-lg font-bold">Synopsis</h2>
+
+                <p class="mt-2 max-w-3xl whitespace-pre-line text-sm leading-7 text-zinc-300">
+                  {movie.description || "Description is not available yet."}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Embedded movie player -->
+        <section id="watch" class="mt-12 scroll-mt-24">
+          <div class="mb-5">
+            <p class="text-xs font-bold uppercase tracking-[0.2em] text-violet-400">
+              Now Playing
+            </p>
+
+            <h2 class="mt-2 text-2xl font-black md:text-3xl">
+              Watch Movie
+            </h2>
+
+            <p class="mt-2 text-sm text-zinc-400">
+              Choose an available video player and watch here.
+            </p>
+          </div>
+
+          {playerSources.length > 0 ? (
+            <div class="overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl shadow-violet-950/10">
+              <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-zinc-900 px-4 py-4 sm:px-5">
+                <div>
+                  <p class="font-bold">
+                    {movie.title}
+                  </p>
+
+                  <p id="player-quality" class="mt-1 text-xs text-zinc-400">
+                    {playerSources[0].quality || "Online player"}
+                  </p>
+                </div>
+
+                {playerSources.length > 1 && (
+                  <div class="flex items-center gap-3">
+                    <label for="movie-player-select" class="text-sm text-zinc-400">
+                      Source
+                    </label>
+
+                    <select
+                      id="movie-player-select"
+                      class="max-w-[210px] rounded-lg border border-white/10 bg-zinc-800 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-400"
+                    >
+                      {playerSources.map((source, index) => (
+                        <option
+                          value={getEmbedUrl(source.url) ?? ""}
+                          data-quality={source.quality || "Online player"}
+                          selected={index === 0}
+                        >
+                          {source.label || source.quality || `Player ${index + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div class="relative aspect-video w-full bg-black">
+                <iframe
+                  id="movie-player-frame"
+                  src={getEmbedUrl(playerSources[0].url)!}
+                  title={`Watch ${movie.title}`}
+                  class="absolute inset-0 h-full w-full border-0"
+                  loading="lazy"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                  allowfullscreen
+                ></iframe>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-zinc-900 px-4 py-3 sm:px-5">
+                <p class="text-xs text-zinc-400">
+                  Having trouble? The provider may block embedded playback.
+                </p>
+
+                <a
+                  id="open-player-link"
+                  href={getEmbedUrl(playerSources[0].url)!}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  class="text-sm font-semibold text-violet-300 transition hover:text-violet-200"
+                >
+                  Open player ↗
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div class="rounded-2xl border border-white/10 bg-zinc-900 px-6 py-14 text-center">
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-violet-400/20 bg-violet-500/10">
+                <span class="pl-1 text-2xl text-violet-300">▶</span>
+              </div>
+
+              <h3 class="mt-5 text-xl font-bold">Player not available</h3>
+
+              <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-400">
+                There are no active player sources for this movie yet.
+                Add an authorized, embeddable video URL to the video_sources table.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <!-- Download links -->
+        <section class="mt-12">
+          <div class="mb-5">
+            <h2 class="text-2xl font-black">Download Links</h2>
+            <p class="mt-2 text-sm text-zinc-400">
+              Available download sources and qualities.
+            </p>
+          </div>
+
+          {downloadSources.length > 0 ? (
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {downloadSources.map((source) => (
+                <a
+                  href={safeHttpsUrl(source.url)!}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  class="group rounded-xl border border-white/10 bg-zinc-900 p-4 transition hover:border-violet-400/50 hover:bg-zinc-800"
+                >
+                  <span class="text-xs font-bold uppercase tracking-wider text-violet-300">
+                    {source.quality || "Download"}
+                  </span>
+
+                  <span class="mt-2 block font-bold">
+                    {source.label || "Open download link"} ↗
+                  </span>
+
+                  <span class="mt-1 block text-xs text-zinc-500">
+                    Opens in a new tab
+                  </span>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p class="rounded-xl border border-white/10 bg-zinc-900 p-6 text-sm text-zinc-400">
+              No download links are available yet.
+            </p>
+          )}
+        </section>
+      </main>
+    )}
+
+    <footer class="mt-16 border-t border-white/10 px-4 py-8 text-center text-xs text-zinc-500">
+      © {new Date().getFullYear()} CineVerse. All rights reserved.
+    </footer>
+
+    <script>
+      const playerSelect = document.querySelector<HTMLSelectElement>(
+        "#movie-player-select"
+      );
+
+      const playerFrame = document.querySelector<HTMLIFrameElement>(
+        "#movie-player-frame"
+      );
+
+      const openPlayerLink = document.querySelector<HTMLAnchorElement>(
+        "#open-player-link"
+      );
+
+      const playerQuality = document.querySelector<HTMLElement>(
+        "#player-quality"
+      );
+
+      playerSelect?.addEventListener("change", () => {
+        const selectedOption =
+          playerSelect.options[playerSelect.selectedIndex];
+
+        const nextUrl = playerSelect.value;
+
+        if (!playerFrame || !nextUrl.startsWith("https://")) return;
+
+        playerFrame.src = nextUrl;
+
+        if (openPlayerLink) {
+          openPlayerLink.href = nextUrl;
+        }
+
+        if (playerQuality && selectedOption) {
+          playerQuality.textContent =
+            selectedOption.dataset.quality || "Online player";
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,54 @@
+
+---
+interface Episode {
+  id: string;
+  episode_number: number;
+  title: string;
+  description: string | null;
+  duration_minutes: number | null;
+}
+
+interface Props {
+  episodes: Episode[];
+  seriesSlug: string;
+  seasonNumber: number;
+}
+
+const { episodes, seriesSlug, seasonNumber } = Astro.props;
+---
+
+<div class="mt-5 space-y-3">
+  {episodes.length === 0 ? (
+    <p class="rounded-xl border border-white/10 bg-zinc-900 p-5 text-sm text-zinc-400">
+      No published episodes in this season yet.
+    </p>
+  ) : (
+    episodes.map((episode) => (
+      <a
+        href={`/title/${encodeURIComponent(seriesSlug)}/season/${seasonNumber}/episode/${episode.episode_number}/`}
+        class="flex items-center gap-4 rounded-xl border border-white/10 bg-zinc-900 p-4 transition hover:border-violet-400/40 hover:bg-zinc-800"
+      >
+        <div class="flex size-12 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 font-black text-violet-300">
+          {String(episode.episode_number).padStart(2, "0")}
+        </div>
+
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate font-semibold">{episode.title}</h3>
+          {episode.description && (
+            <p class="mt-1 line-clamp-2 text-sm text-zinc-400">
+              {episode.description}
+            </p>
+          )}
+        </div>
+
+        {episode.duration_minutes && (
+          <span class="shrink-0 text-xs text-zinc-500">
+            {episode.duration_minutes} min
+          </span>
+        )}
+
+        <span class="text-violet-300">→</span>
+      </a>
+    ))
+  )}
+</div>

@@ -1,0 +1,138 @@
+
+---
+interface CategoryRelation {
+  category: {
+    id: string | number;
+    name: string;
+    slug: string;
+  } | null;
+}
+
+interface MediaItem {
+  id: string | number;
+  slug: string;
+  title: string;
+  poster_url: string | null;
+  backdrop_url?: string | null;
+  video_type?: string | null;
+  media_type?: string | null;
+  imdb_rating: number | null;
+  release_year: number | null;
+  created_at?: string | null;
+  media_categories?: CategoryRelation[] | null;
+}
+
+interface Props {
+  heading: string;
+  items: Item[];
+  mediaType?: "movie" | "series";
+}
+
+const { heading, items, mediaType = "movie" } = Astro.props;
+---
+
+<div class="movie-grid">
+  {items.map((item) => {
+    const categoryNames = (item.media_categories ?? [])
+      .map((relation) => relation.category?.name)
+      .filter((name): name is string => Boolean(name));
+
+    const categorySlugs = (item.media_categories ?? [])
+      .map((relation) => relation.category?.slug)
+      .filter((slug): slug is string => Boolean(slug));
+
+    const categoryData = [...categoryNames, ...categorySlugs]
+      .map((value) => value.toLowerCase())
+      .join("|");
+
+return (
+  <a
+    class="movie-card group"
+    href={
+      mediaType === "series"
+        ? `/series/${encodeURIComponent(item.slug)}/`
+        : `/title/${encodeURIComponent(item.slug)}/`
+    }
+    data-title={item.title.toLowerCase()}
+    data-year={item.release_year ?? ""}
+    data-rating={item.imdb_rating ?? ""}
+    data-category={categoryData}
+    data-type={item.media_type ?? ""}
+    data-created-at={item.created_at ?? ""}
+  >
+        <div class="poster-wrap">
+          {item.poster_url ? (
+            <img
+              src={item.poster_url}
+              alt={`${item.title} poster`}
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <div class="poster-placeholder">
+              <span>CINEVERSE</span>
+              <strong>{item.title}</strong>
+            </div>
+          )}
+
+          <span class="video-type">
+            {item.video_type || item.media_type || "HD"}
+          </span>
+
+          {item.imdb_rating !== null &&
+            item.imdb_rating !== undefined && (
+              <span class="rating">
+                ★ {Number(item.imdb_rating).toFixed(1)}
+              </span>
+            )}
+        </div>
+
+        <div class="card-meta">
+          <h3>{item.title}</h3>
+
+          <div class="card-details">
+            <span>{item.release_year ?? "Year N/A"}</span>
+
+            {categoryNames.length > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span class="card-category">{categoryNames[0]}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </a>
+    );
+  })}
+</div>
+
+<style>
+  .poster-placeholder {
+    width: 100%;
+    height: 100%;
+    min-height: 150px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    text-align: center;
+    background:
+      radial-gradient(circle at top, rgba(168, 85, 247, 0.28), transparent 65%),
+      #11111a;
+  }
+
+  .poster-placeholder span {
+    color: #c4b5fd;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 2px;
+  }
+
+  .poster-placeholder strong {
+    color: #f5f3ff;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+</style>
