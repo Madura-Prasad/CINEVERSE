@@ -1,4 +1,3 @@
-
 ---
 import "../../styles/global.css";
 import { supabase } from "../../lib/supabase";
@@ -90,7 +89,7 @@ function safeHttpsUrl(value: string | null | undefined): string | null {
   if (!value) return null;
 
   try {
-    const url = new URL(value);
+    const url = new URL(value.trim());
 
     if (url.protocol !== "https:") return null;
 
@@ -100,7 +99,20 @@ function safeHttpsUrl(value: string | null | undefined): string | null {
   }
 }
 
-// Convert supported video URLs to embeddable URLs.
+function getDirectVideoUrl(value: string): string | null {
+  const safeUrl = safeHttpsUrl(value);
+  if (!safeUrl) return null;
+
+  try {
+    const url = new URL(safeUrl);
+    return /\.mp4$/i.test(url.pathname) ? safeUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+// YouTube / Vimeo -> official embed URLs.
+// Any other https URL (cs07 player etc.) is used as-is in an iframe.
 function getEmbedUrl(value: string): string | null {
   const safeUrl = safeHttpsUrl(value);
 
@@ -110,7 +122,6 @@ function getEmbedUrl(value: string): string | null {
     const url = new URL(safeUrl);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
 
-    // YouTube watch URLs
     if (
       host === "youtube.com" ||
       host === "m.youtube.com" ||
@@ -122,15 +133,16 @@ function getEmbedUrl(value: string): string | null {
         return `https://www.youtube.com/embed/${videoId}`;
       }
 
-      // Already an embed URL
-      if (host === "youtube.com" && url.pathname.startsWith("/embed/")) {
+      if (
+        url.pathname.startsWith("/embed/") &&
+        /^[a-zA-Z0-9_-]{11}$/.test(url.pathname.split("/")[2] ?? "")
+      ) {
         return safeUrl;
       }
 
       return null;
     }
 
-    // YouTube short URLs
     if (host === "youtu.be") {
       const videoId = url.pathname.split("/").filter(Boolean)[0];
 
@@ -141,7 +153,6 @@ function getEmbedUrl(value: string): string | null {
       return null;
     }
 
-    // Vimeo
     if (host === "vimeo.com") {
       const videoId = url.pathname.split("/").filter(Boolean)[0];
 
@@ -152,18 +163,54 @@ function getEmbedUrl(value: string): string | null {
       return null;
     }
 
-    // Other HTTPS URLs may work if their provider permits embedding.
+    // Generic embed player (cs07 and any other https player URL)
     return safeUrl;
   } catch {
     return null;
   }
 }
 
-const playerSources = sources.filter(
-  (source) =>
-    source.source_type === "player" &&
-    getEmbedUrl(source.url) !== null
-);
+type Playable = {
+  kind: "video" | "iframe";
+  url: string;
+  label: string | null;
+  quality: string | null;
+};
+
+// One combined list, keeps the sort_order from the database.
+// So the first row (e.g. "demo player", sort_order = 0) loads by default.
+const playable: Playable[] = sources
+  .filter((source) => source.source_type === "player")
+  .map((source): Playable | null => {
+    const direct = getDirectVideoUrl(source.url);
+    if (direct) {
+      return {
+        kind: "video",
+        url: direct,
+        label: source.label,
+        quality: source.quality,
+      };
+    }
+
+    const embed = getEmbedUrl(source.url);
+    if (embed) {
+      return {
+        kind: "iframe",
+        url: embed,
+        label: source.label,
+        quality: source.quality,
+      };
+    }
+
+    return null;
+  })
+  .filter((item): item is Playable => item !== null);
+
+const current = playable[0];
+
+function defaultQuality(item: Playable): string {
+  return item.quality || (item.kind === "video" ? "MP4 Video" : "Online Player");
+}
 
 const downloadSources = sources.filter(
   (source) =>
@@ -192,6 +239,8 @@ const canonicalUrl = movie
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#09090b" />
+    <!-- Video files are requested without a referrer, so hotlink protection on the host does not block them. Iframes set their own referrerpolicy. -->
+    <meta name="referrer" content="no-referrer" />
 
     <title>{pageTitle}</title>
     <meta name="description" content={pageDescription} />
@@ -325,29 +374,22 @@ const canonicalUrl = movie
               <div class="mt-7 grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3">
                 <div>
                   <p class="text-xs text-zinc-500">Language</p>
-                  <p class="mt-1 text-sm font-medium">
-                    {movie.language || "Unknown"}
-                  </p>
+                  <p class="mt-1 text-sm font-medium">{movie.language || "Unknown"}</p>
                 </div>
 
                 <div>
                   <p class="text-xs text-zinc-500">Country</p>
-                  <p class="mt-1 text-sm font-medium">
-                    {movie.country || "Unknown"}
-                  </p>
+                  <p class="mt-1 text-sm font-medium">{movie.country || "Unknown"}</p>
                 </div>
 
                 <div>
                   <p class="text-xs text-zinc-500">Director</p>
-                  <p class="mt-1 text-sm font-medium">
-                    {movie.director || "Unknown"}
-                  </p>
+                  <p class="mt-1 text-sm font-medium">{movie.director || "Unknown"}</p>
                 </div>
               </div>
 
               <div class="mt-7">
                 <h2 class="text-lg font-bold">Synopsis</h2>
-
                 <p class="mt-2 max-w-3xl whitespace-pre-line text-sm leading-7 text-zinc-300">
                   {movie.description || "Description is not available yet."}
                 </p>
@@ -356,36 +398,25 @@ const canonicalUrl = movie
           </div>
         </section>
 
-        <!-- Embedded movie player -->
+        <!-- Movie player -->
         <section id="watch" class="mt-12 scroll-mt-24">
           <div class="mb-5">
             <p class="text-xs font-bold uppercase tracking-[0.2em] text-violet-400">
               Now Playing
             </p>
 
-            <h2 class="mt-2 text-2xl font-black md:text-3xl">
-              Watch Movie
-            </h2>
+            <h2 class="mt-2 text-2xl font-black md:text-3xl">Watch Movie</h2>
 
-            <p class="mt-2 text-sm text-zinc-400">
-              Choose an available video player and watch here.
-            </p>
           </div>
 
-          {playerSources.length > 0 ? (
+          {current ? (
             <div class="overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl shadow-violet-950/10">
               <div class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-zinc-900 px-4 py-4 sm:px-5">
-                <div>
-                  <p class="font-bold">
-                    {movie.title}
-                  </p>
+                {/*<div>
+                  <p class="font-bold">{movie.title}</p>
+                </div>*/}
 
-                  <p id="player-quality" class="mt-1 text-xs text-zinc-400">
-                    {playerSources[0].quality || "Online player"}
-                  </p>
-                </div>
-
-                {playerSources.length > 1 && (
+                {playable.length > 1 && (
                   <div class="flex items-center gap-3">
                     <label for="movie-player-select" class="text-sm text-zinc-400">
                       Source
@@ -393,15 +424,16 @@ const canonicalUrl = movie
 
                     <select
                       id="movie-player-select"
-                      class="max-w-[210px] rounded-lg border border-white/10 bg-zinc-800 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-400"
+                      class="max-w-[220px] rounded-lg border border-white/10 bg-zinc-800 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-400"
                     >
-                      {playerSources.map((source, index) => (
+                      {playable.map((item, index) => (
                         <option
-                          value={getEmbedUrl(source.url) ?? ""}
-                          data-quality={source.quality || "Online player"}
+                          value={item.url}
+                          data-kind={item.kind}
+                          data-quality={item.label || defaultQuality(item)}
                           selected={index === 0}
                         >
-                          {source.label || source.quality || `Player ${index + 1}`}
+                          {item.label || item.quality || `Player ${index + 1}`}
                         </option>
                       ))}
                     </select>
@@ -409,34 +441,47 @@ const canonicalUrl = movie
                 )}
               </div>
 
-              <div class="relative aspect-video w-full bg-black">
-                <iframe
-                  id="movie-player-frame"
-                  src={getEmbedUrl(playerSources[0].url)!}
-                  title={`Watch ${movie.title}`}
-                  class="absolute inset-0 h-full w-full border-0"
-                  loading="lazy"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-                  referrerpolicy="strict-origin-when-cross-origin"
-                  allowfullscreen
-                ></iframe>
+              <div id="player-container" class="relative aspect-video w-full bg-black">
+                {current.kind === "video" ? (
+                  <video
+                    id="movie-video"
+                    class="absolute inset-0 h-full w-full bg-black"
+                    controls
+                    playsinline
+                    preload="metadata"
+                    poster={movie.poster_url || undefined}
+                    src={current.url}
+                  >
+                    Your browser does not support HTML5 video.
+                  </video>
+                ) : (
+                  <iframe
+                    id="movie-player-frame"
+                    src={current.url}
+                    title={`Watch ${movie.title}`}
+                    class="absolute inset-0 h-full w-full border-0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+                    referrerpolicy="strict-origin-when-cross-origin"
+                    allowfullscreen
+                  ></iframe>
+                )}
               </div>
 
-              <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-zinc-900 px-4 py-3 sm:px-5">
+              {/*<div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-zinc-900 px-4 py-3 sm:px-5">
                 <p class="text-xs text-zinc-400">
-                  Having trouble? The provider may block embedded playback.
+                  If playback fails, the video host may restrict external playback.
                 </p>
 
                 <a
                   id="open-player-link"
-                  href={getEmbedUrl(playerSources[0].url)!}
+                  href={current.url}
                   target="_blank"
                   rel="noopener noreferrer nofollow"
                   class="text-sm font-semibold text-violet-300 transition hover:text-violet-200"
                 >
-                  Open player ↗
+                  Open source ↗
                 </a>
-              </div>
+              </div>*/}
             </div>
           ) : (
             <div class="rounded-2xl border border-white/10 bg-zinc-900 px-6 py-14 text-center">
@@ -447,8 +492,8 @@ const canonicalUrl = movie
               <h3 class="mt-5 text-xl font-bold">Player not available</h3>
 
               <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-400">
-                There are no active player sources for this movie yet.
-                Add an authorized, embeddable video URL to the video_sources table.
+                No supported active player sources are available. Add a player
+                row with an https URL to video_sources.
               </p>
             </div>
           )}
@@ -467,7 +512,7 @@ const canonicalUrl = movie
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {downloadSources.map((source) => (
                 <a
-                  href={safeHttpsUrl(source.url)!}
+                  href={safeHttpsUrl(source.url) ?? "#"}
                   target="_blank"
                   rel="noopener noreferrer nofollow"
                   class="group rounded-xl border border-white/10 bg-zinc-900 p-4 transition hover:border-violet-400/50 hover:bg-zinc-800"
@@ -503,37 +548,74 @@ const canonicalUrl = movie
       const playerSelect = document.querySelector<HTMLSelectElement>(
         "#movie-player-select"
       );
+      const container = document.querySelector<HTMLElement>("#player-container");
+      const openLink = document.querySelector<HTMLAnchorElement>("#open-player-link");
+      const qualityLabel = document.querySelector<HTMLElement>("#player-quality");
 
-      const playerFrame = document.querySelector<HTMLIFrameElement>(
-        "#movie-player-frame"
-      );
+      const movieTitle = document.querySelector("h1")?.childNodes[0]?.textContent?.trim() || "movie";
+      const posterUrl = document.querySelector<HTMLImageElement>("img[alt$='poster']")?.src;
 
-      const openPlayerLink = document.querySelector<HTMLAnchorElement>(
-        "#open-player-link"
-      );
+      function buildFrame(url: string): HTMLIFrameElement {
+        const frame = document.createElement("iframe");
+        frame.id = "movie-player-frame";
+        frame.title = `Watch ${movieTitle}`;
+        frame.className = "absolute inset-0 h-full w-full border-0";
+        frame.allowFullscreen = true;
+        frame.allow =
+          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
+        frame.referrerPolicy = "strict-origin-when-cross-origin";
+        frame.src = url;
+        return frame;
+      }
 
-      const playerQuality = document.querySelector<HTMLElement>(
-        "#player-quality"
-      );
+      // If the <video> cannot load the URL, fall back to loading the same URL in an iframe.
+      function attachVideoFallback(video: HTMLVideoElement, url: string) {
+        let handled = false;
+
+        const onFail = () => {
+          if (handled || !container) return;
+          handled = true;
+          container.innerHTML = "";
+          container.appendChild(buildFrame(url));
+        };
+
+        video.addEventListener("error", onFail, { once: true });
+        video.querySelector("source")?.addEventListener("error", onFail, { once: true });
+      }
+
+      const initialVideo = document.querySelector<HTMLVideoElement>("#movie-video");
+      if (initialVideo?.src) attachVideoFallback(initialVideo, initialVideo.src);
 
       playerSelect?.addEventListener("change", () => {
-        const selectedOption =
-          playerSelect.options[playerSelect.selectedIndex];
+        const option = playerSelect.selectedOptions[0];
+        if (!option || !container) return;
 
         const nextUrl = playerSelect.value;
+        if (!nextUrl.startsWith("https://")) return;
 
-        if (!playerFrame || !nextUrl.startsWith("https://")) return;
+        const kind = option.dataset.kind;
+        const label = option.dataset.quality || "Online Player";
 
-        playerFrame.src = nextUrl;
+        // Remove whatever is playing now, then build the new player.
+        container.innerHTML = "";
 
-        if (openPlayerLink) {
-          openPlayerLink.href = nextUrl;
+        if (kind === "video") {
+          const video = document.createElement("video");
+          video.id = "movie-video";
+          video.className = "absolute inset-0 h-full w-full bg-black";
+          video.controls = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          if (posterUrl) video.poster = posterUrl;
+          video.src = nextUrl;
+          attachVideoFallback(video, nextUrl);
+          container.appendChild(video);
+        } else if (kind === "iframe") {
+          container.appendChild(buildFrame(nextUrl));
         }
 
-        if (playerQuality && selectedOption) {
-          playerQuality.textContent =
-            selectedOption.dataset.quality || "Online player";
-        }
+        if (openLink) openLink.href = nextUrl;
+        if (qualityLabel) qualityLabel.textContent = label;
       });
     </script>
   </body>
