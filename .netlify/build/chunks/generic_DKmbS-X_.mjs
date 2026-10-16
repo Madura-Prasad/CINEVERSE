@@ -1,5 +1,5 @@
 import { C as LocalImageUsedWrongly, M as NoImageMetadata, O as MissingGetFontFileRequestUrl, Q as AstroError, S as InvalidImageService, V as RemoteImageNotAllowed, X as UnsupportedImageFormat, Y as UnsupportedImageConversion, _ as ImageMissingAlt, c as ExpectedImageOptions, d as FontFamilyNotFound, k as MissingImageDimension, l as ExpectedNotESMImage, s as ExpectedImage, tt as __exportAll, u as FailedToFetchRemoteImageDimensions, v as IncompatibleDescriptorOptions } from "./errors_C8cQnSfQ.mjs";
-import { n as path_exports } from "./ssr-function_Ca3gQAGp.mjs";
+import { n as path_exports } from "./ssr-function_X7zKIyYY.mjs";
 import { C as createComponent, S as createAstro, b as unescapeHTML, d as maybeRenderHead, p as addAttribute, t as spreadAttributes, u as renderTemplate } from "./server_DSKvYReI.mjs";
 import { t as createConsoleLogger } from "./console_CCMeJG8b.mjs";
 import "./compiler_MK_MV47C.mjs";
@@ -1505,7 +1505,7 @@ var cssFitValues = [
 ];
 async function getConfiguredImageService() {
 	if (!globalThis?.astroAsset?.imageService) {
-		const { default: service } = await import("./image-service_BRzzMd3G.mjs").catch((e) => {
+		const { default: service } = await import("./image-service_C_meYgHT.mjs").catch((e) => {
 			const error = new AstroError(InvalidImageService);
 			error.cause = e;
 			throw error;
